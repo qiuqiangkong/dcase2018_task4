@@ -39,7 +39,7 @@ No. 9, Y7yeWLEus7OI_80.000_90.000.wav
 ## Run the code
 **1. (Optional) Install dependent packages.** If you are using conda, simply run:
 
-$ conda env create -f environment.yml
+$ conda env create -f pytorch/environment.yml
 
 $ conda activate py3_dcase2018_task4
 
