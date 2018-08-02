@@ -37,11 +37,41 @@ No. 9, Y7yeWLEus7OI_80.000_90.000.wav
 </pre>
 
 ## Run the code
+**Prepare data.** Download and unzip the data. The data looks like:
+
+<pre>
+.
+├── audio
+│     ├── train
+│     │     ├── weak (1578 audios)
+│     │     │     └── ...
+│     │     ├── unlabel_in_domain (14412 audios)
+│     │     │     └── ...
+│     │     └── unlabel_out_of_domain (39999 audios)
+│     │           └── ...
+│     ├── test (288 audios)
+│     │     └── ...
+│     └── eval (880 audios)
+│           └── ...
+├── metadata
+│     ├── train
+│     │     ├── weak.csv
+│     │     ├── unlabel_in_domain.csv
+│     │     └── unlabel_out_of_domain.csv
+│     ├── test
+│     │     └── test.csv
+│     └── eval
+│           └── eval.csv
+└── ...
+</pre>
+
 **1. (Optional) Install dependent packages.** If you are using conda, simply run:
 
 $ conda env create -f pytorch/environment.yml
 
 $ conda activate py3_dcase2018_task4
+
+<span style="color:red">(We developed this system with python 3. If you are using pytorch as backend then pytorch 0.4.0 is required.)</span>
 
 **2. Then simply run:**
 
@@ -79,7 +109,7 @@ root        : INFO     va_ap: 0.781, va_auc: 0.930, va_loss: 0.260
 
 ## Result
 
-We apply a convolutional neural network on the log mel spectrogram feature to solve this task. Training takes around 100 ms / iteration on a GTX Titan X GPU. The model is trained for 5000 iterations. The result is shown below. We use mean average precision (mAP) to evaluate audio tagging (AT) and F score to evaluate sound event detection (SED). 
+We apply a convolutional neural network on the log mel spectrogram feature to solve this task. Training takes around 200 ms / iteration on a GTX Titan X GPU. The model is trained for 5000 iterations. The result is shown below. We use mean average precision (mAP) to evaluate audio tagging (AT) and F score to evaluate sound event detection (SED). 
 
 
 |                            | AT (mAP)  | SED_1 (F score) | SED_2 (F score) |
@@ -99,6 +129,9 @@ We apply a convolutional neural network on the log mel spectrogram feature to so
 
 ## Summary
 This codebase provides a convolutional neural network (CNN) for DCASE 2018 challenge Task 4. 
+
+## FAQ
+If you met running out of GPU memory error, then try reduce batch_size. 
 
 ### External link
 

@@ -111,6 +111,14 @@ def calculate_ap(target, predict, average='macro'):
     return metrics.average_precision_score(target, predict, average)
 
 
+def calculate_f1_score(target, predict, average='macro'):
+    
+    import crash
+    asdf
+    
+    return metrics.f1_score(target, predict, average=average)
+
+
 def read_strong_meta(strong_meta):
     """Read list of events from strong meta. 
     
@@ -282,7 +290,7 @@ def event_based_evaluation(reference_event_list, estimated_event_list):
     return event_based_metric
     
     
-def write_submission(estimated_event_list, submission_path):
+def write_testing_data_submission_csv(estimated_event_list, submission_path):
     
     # Write out submission file
     f = open(submission_path, 'w')

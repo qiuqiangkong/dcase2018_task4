@@ -10,7 +10,17 @@ import config
 
 class DataGenerator(object):
     
-    def __init__(self, train_hdf5_path, validate_hdf5_path, batch_size, validate, seed=1234):
+    def __init__(self, train_hdf5_path, validate_hdf5_path, batch_size, 
+                 validate, seed=1234):
+        """Data generator. 
+        
+        Args:
+          train_hdf5_path: str, path of train hdf5 file
+          validate_hdf5_path: str, path of validate hdf5 path
+          batch_size: int
+          validate: bool
+          seed: int
+        """
         
         self.random_state = np.random.RandomState(seed)
         self.validate_random_state = np.random.RandomState(0)
@@ -18,13 +28,12 @@ class DataGenerator(object):
 
         self.batch_size = batch_size
         self.validate = validate
-        self.scale = scale
 
         # Load data
         load_time = time.time()
         
         hf = h5py.File(train_hdf5_path, 'r')
-        self.train_audio_names = np.array([s.decode() for s in hf['audio_name']])
+        self.train_audio_names = np.array([s.decode() for s in hf['audio_name'][:]])
         self.train_x = hf['feature'][:]
         self.train_y = hf['target'][:]
         hf.close()
@@ -35,7 +44,8 @@ class DataGenerator(object):
         self.validate_y = hf['target'][:]
         hf.close()    
         
-        logging.info('Loading data time: {:.3f} s'.format(time.time() - load_time))
+        logging.info('Loading data time: {:.3f} s'
+            ''.format(time.time() - load_time))
 
         # Get train & validate audio indexes
         self.audio_names = np.concatenate(
@@ -56,12 +66,19 @@ class DataGenerator(object):
             self.train_audio_indexes = np.arange(len(self.audio_names))
             self.validate_audio_indexes = np.array([])
         
-        logging.info("Training audios: {}".format(len(self.train_audio_indexes)))
-        logging.info("Validation audios: {}".format(len(self.validate_audio_indexes)))
+        logging.info("Training audios: {}".format(
+            len(self.train_audio_indexes)))
         
-        (self.mean, self.std) = calculate_scalar(self.x)
+        logging.info("Validation audios: {}".format(
+            len(self.validate_audio_indexes)))
+        
+        # Calculate scalar
+        (self.mean, self.std) = calculate_scalar(
+            self.x[self.train_audio_indexes])
         
     def generate_train(self):
+        """Generate mini-batch data for training. 
+        """
         
         batch_size = self.batch_size
         indexes = np.array(self.train_audio_indexes)
@@ -94,7 +111,14 @@ class DataGenerator(object):
             
             yield batch_x, batch_y
         
-    def generate_validate(self, data_type, max_iteration=None, shuffle=False):
+    def generate_validate(self, data_type, shuffle=False, max_iteration=None):
+        """Generate mini-batch data for validation. 
+        
+        Args:
+          data_type: 'train' | 'validate'
+          shuffle: bool
+          max_iteration: int, maximum iteration for speed up validation
+        """
     
         batch_size = self.batch_size
         
@@ -157,6 +181,14 @@ class TestDataGenerator(DataGenerator):
     
     def __init__(self, train_hdf5_path, validate_hdf5_path, eval_hdf5_path,
                  batch_size):
+        """Test data generator. 
+        
+        Args:
+          train_hdf5_path: str, path of training hdf5 file
+          validate_hdf5_path, str, path of validation hdf5
+          eval_hdf5_path: str, path of evaluation hdf5 file
+          batch_size: int
+        """
         
         super(TestDataGenerator, self).__init__(
             train_hdf5_path=train_hdf5_path, 
@@ -169,7 +201,7 @@ class TestDataGenerator(DataGenerator):
         hf = h5py.File(eval_hdf5_path, 'r')
         
         self.eval_audio_names = np.array(
-            [name.decode() for name in hf['audio_name']])
+            [name.decode() for name in hf['audio_name'][:]])
         
         self.eval_x = hf['feature'][:]
         

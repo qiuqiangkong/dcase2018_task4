@@ -17,41 +17,56 @@ from torch.autograd import Variable
 
 from data_generator import DataGenerator, TestDataGenerator
 from utilities import (create_folder, get_filename, create_logging, 
-                       calculate_auc, calculate_ap, read_strong_meta, 
+                       calculate_auc, read_strong_meta, calculate_f1_score, 
                        calculate_estimated_event_list, 
                        read_frame_wise_probs_from_strong_meta, 
                        get_binary_predictions, event_based_evaluation, 
-                       write_submission)
-from models_pytorch import move_data_to_gpu, init_layer, init_bn, BaselineCnn
+                       write_testing_data_submission_csv)
+from models_pytorch import move_data_to_gpu, BaselineCnn, Vggish
 import config
 
 
 # Hyper parameters
-at_thres = 0.8
+batch_size = 32
+Model = Vggish
 
-sed = False
+at_thres = 0.8  # Audio tagging threshold
+
+sed = True
 
 if sed:
-    sed_thres = 0.8
-    sed_low_thres = 0.2
+    sed_thres = 0.8     # Sound event detection high threshold
+    sed_low_thres = 0.2 # Sound event detection low threshold
 else:
     sed_thres = 0.
     sed_low_thres = 0.
 
 
 def evaluate(model, generator, data_type, max_iteration, cuda):
-
+    """Evaluate. 
+    
+    Args:
+      model: object
+      generator: object
+      data_type: string, 'train' | 'validate'
+      max_iteration: int, maximum iteration for validation
+      cuda: bool
+      
+    Returns:
+      mauc: float, mean AUC
+      loss: float
+    """
+    
     generate_func = generator.generate_validate(data_type=data_type, 
                                                 max_iteration=max_iteration)
 
     # Inference
-    dict = forward(
-        model=model,
-        generate_func=generate_func,
-        cuda=cuda,
-        return_inputs=False, 
-        return_targets=True, 
-        return_frame_wise_probs=False)
+    dict = forward(model=model,
+                   generate_func=generate_func,
+                   cuda=cuda,
+                   return_inputs=False, 
+                   return_targets=True, 
+                   return_frame_wise_probs=False)
         
     outputs = dict['outputs']
     targets = dict['targets']
@@ -61,12 +76,10 @@ def evaluate(model, generator, data_type, max_iteration, cuda):
                                   torch.Tensor(targets)).numpy()
     loss = float(loss)
 
-    map = calculate_ap(targets, outputs)
-
     mauc = calculate_auc(targets, outputs)
 
     # return map, mauc, loss
-    return map, mauc, loss
+    return mauc, loss
     
 
 def forward(model, generate_func, cuda, return_inputs, return_targets, 
@@ -91,11 +104,11 @@ def forward(model, generate_func, cuda, return_inputs, return_targets,
     if return_frame_wise_probs:
         frame_wise_probs = []
     
-    iteration = 0
-
+    n = 0
+    
     # Evaluate on mini-batch
     for data in generate_func:
-        
+
         if return_targets:
             (batch_x, batch_y, batch_audio_names) = data
             
@@ -114,23 +127,21 @@ def forward(model, generate_func, cuda, return_inputs, return_targets,
             
         else:
             batch_output = model(batch_x, return_frame_wise_probs=False)
-        
+
         # Append data    
         outputs.append(batch_output.data.cpu().numpy())
         
         audio_names.append(batch_audio_names)
         
         if return_inputs:
-            inputs.append(batch_x)
+            inputs.append(batch_x.data.cpu().numpy())
             
         if return_targets:
             targets.append(batch_y)
         
         if return_frame_wise_probs:
             frame_wise_probs.append(batch_frame_wise_probs.data.cpu().numpy())
-        
-        iteration += 1
-
+            
     dict = {}
 
     outputs = np.concatenate(outputs, axis=0)
@@ -163,8 +174,6 @@ def train(args):
     filename = args.filename
     classes_num = len(config.labels)
     
-    batch_size = 64
-
     # Paths
     train_hdf5_path = os.path.join(workspace, 'features', 'logmel', 'train', 
                                    'weak.h5')
@@ -176,18 +185,16 @@ def train(args):
         validation_csv = os.path.join(dataset_dir, 'metadata', 'test', 
                                       'test.csv')
         
-        models_dir = os.path.join(workspace, 'models', filename, 
-                                'validate={}'.format(validate))
+        models_dir = os.path.join(workspace, 'models', filename, 'validate')
         
     else:
         validation_csv = None
-        models_dir = os.path.join(workspace, 'models', filename, 
-                                  'validate={}'.format(validate))
+        models_dir = os.path.join(workspace, 'models', filename, 'full_train')
                               
     create_folder(models_dir)
 
     # Model
-    model = BaselineCnn(classes_num)
+    model = Model(classes_num)
 
     if cuda:
         model.cuda()
@@ -201,71 +208,52 @@ def train(args):
     optimizer = optim.Adam(model.parameters(), lr=1e-3, betas=(0.9, 0.999),
                            eps=1e-08, weight_decay=0.)
 
-    iteration = 0
     train_bgn_time = time.time()
 
     # Train on mini-batch
-    for (batch_x, batch_y) in generator.generate_train():
+    for (iteration, (batch_x, batch_y)) in enumerate(generator.generate_train()):
 
         # Evaluate
-        if iteration % 100 == 0 and iteration > 0:
+        if iteration % 100 == 0:
 
             train_fin_time = time.time()
             
             
-            (tr_ap, tr_auc, tr_loss) = evaluate(model=model,
-                                                 generator=generator,
-                                                 data_type='train',
-                                                 max_iteration=None,
-                                                 cuda=cuda)
+            (tr_auc, tr_loss) = evaluate(model=model,
+                                         generator=generator,
+                                         data_type='train',
+                                         max_iteration=None,
+                                         cuda=cuda)
             
 
             if validate:
-                (va_ap, va_auc, va_loss) = evaluate(model=model,
-                                                    generator=generator,
-                                                    data_type='validate',
-                                                    max_iteration=None,
-                                                    cuda=cuda)
+                (va_auc, va_loss) = evaluate(model=model,
+                                             generator=generator,
+                                             data_type='validate',
+                                             max_iteration=None,
+                                             cuda=cuda)
 
             train_time = train_fin_time - train_bgn_time
             validate_time = time.time() - train_fin_time
 
             # Print info
             logging.info(
-                "iteration: {}, train time: {:.3f} s, validate time: {:.3f} s".format(
-                    iteration, train_time, validate_time))
+                'iteration: {}, train time: {:.3f} s, validate time: {:.3f} s'
+                ''.format(iteration, train_time, validate_time))
                     
             logging.info(
-                "tr_ap: {:.3f}, tr_auc: {:.3f}, tr_loss: {:.3f}".format(
-                    tr_ap, tr_auc, tr_loss))
+                'tr_auc: {:.3f}, tr_loss: {:.3f}'.format(tr_auc, tr_loss))
             
             if validate:
                 logging.info(
-                    "va_ap: {:.3f}, va_auc: {:.3f}, va_loss: {:.3f}".format(
-                        va_ap, va_auc, va_loss))
+                    'va_auc: {:.3f}, va_loss: {:.3f}'.format(va_auc, va_loss))
                     
-            logging.info("")
+            logging.info('------------------------------------')
 
             train_bgn_time = time.time()
 
-        # Move data to gpu
-        batch_x = move_data_to_gpu(batch_x, cuda)
-        batch_y = move_data_to_gpu(batch_y, cuda)
-
-        # Train
-        model.train()
-        output = model(batch_x)
-        loss = F.binary_cross_entropy(output, batch_y)
-
-        # Backward
-        optimizer.zero_grad()
-        loss.backward()
-        optimizer.step()
-        
-        iteration += 1
-
         # Save model
-        if iteration % 1000 == 0 and iteration > 0:
+        if iteration % 1000 == 0:
             
             save_out_dict = {'iteration': iteration,
                              'state_dict': model.state_dict(),
@@ -274,19 +262,32 @@ def train(args):
             save_out_path = os.path.join(
                 models_dir, 'md_{}_iters.tar'.format(iteration))
             torch.save(save_out_dict, save_out_path)
-            logging.info("Model saved to {}".format(save_out_path))
+            logging.info('Model saved to {}'.format(save_out_path))
             
         # Reduce learning rate
-        if iteration % 100 == 0:
+        if iteration % 100 == 0 and iteration > 0:
             for param_group in optimizer.param_groups:
                 param_group['lr'] *= 0.9
-                
+
+        # Train
+        batch_x = move_data_to_gpu(batch_x, cuda)
+        batch_y = move_data_to_gpu(batch_y, cuda)
+
+        model.train()
+        output = model(batch_x)
+        loss = F.binary_cross_entropy(output, batch_y)
+
+        # Backward
+        optimizer.zero_grad()
+        loss.backward()
+        optimizer.step()
+  
         # Stop learning
         if iteration == 10000:
             break
 
 
-def inference_validation(args):
+def inference_validation_data(args):
 
     # Arugments & parameters
     dataset_dir = args.dataset_dir
@@ -297,7 +298,6 @@ def inference_validation(args):
     visualize = args.visualize
 
     validate = True
-    batch_size = 64
     labels = config.labels
     classes_num = len(config.labels)
     hop_samples = config.window_size - config.overlap
@@ -313,11 +313,10 @@ def inference_validation(args):
     validation_csv = os.path.join(dataset_dir, 'metadata', 'test', 'test.csv')
 
     model_path = os.path.join(workspace, 'models', filename, 
-                              'validate={}'.format(validate), 
-                              'md_{}_iters.tar'.format(iteration))
+                              'validate', 'md_{}_iters.tar'.format(iteration))
 
     # Load model
-    model = BaselineCnn(classes_num)
+    model = Model(classes_num)
     checkpoint = torch.load(model_path)
     model.load_state_dict(checkpoint['state_dict'])
 
@@ -346,16 +345,15 @@ def inference_validation(args):
     frame_wise_probs = dict['frame_wise_probs']
 
     # Calculate metrics
-    ap = calculate_ap(targets, outputs, average=None)
     auc = calculate_auc(targets, outputs, average=None)
     
-    print('Audio Tagging result:')
-    print('{:<30}{}\t{}'.format('', 'mAP', 'mAUC'))
-    print('------------------------------------')
+    logging.info('Audio Tagging result:')
+    logging.info('{:<30}{}'.format('', 'mAUC'))
+    logging.info('------------------------------------')
     for (n, label) in enumerate(labels):
-        print('{:<30}{:.3f}\t{:.3f}'.format(label, ap[n], auc[n]))
-    print('------------------------------------')
-    print('{:<30}{:.3f}\t{:.3f}'.format('Average', np.mean(ap), np.mean(auc)))
+        logging.info('{:<30}{:.3f}'.format(label, auc[n]))
+    logging.info('------------------------------------')
+    logging.info('{:<30}{:.3f}'.format('Average', np.mean(auc)))
     
     # Get audio tagging binary predictions
     predictions = get_binary_predictions(outputs, thres=at_thres)
@@ -374,7 +372,7 @@ def inference_validation(args):
     event_based_metric = event_based_evaluation(reference_event_list, 
                                                 estimated_event_list)
     
-    print(event_based_metric)
+    logging.info(event_based_metric)
     
     # Plot sound event detection ground truth & prediction 
     reference_frame_wise_probs = read_frame_wise_probs_from_strong_meta(
@@ -407,7 +405,6 @@ def inference_testing_data(args):
     cuda = args.cuda
     
     validate = False
-    batch_size = 64
     labels = config.labels
     classes_num = len(config.labels)
     hop_samples = config.window_size - config.overlap
@@ -424,8 +421,7 @@ def inference_testing_data(args):
     eval_hdf5_path = os.path.join(workspace, 'features', 'logmel', 'eval', 
                                   'eval.h5')
                                  
-    model_path = os.path.join(workspace, 'models', filename, 
-                              'validate={}'.format(validate), 
+    model_path = os.path.join(workspace, 'models', filename, 'full_train', 
                               'md_{}_iters.tar'.format(iteration))
                               
     submission_path = os.path.join(workspace, 'submissions', filename, 
@@ -435,7 +431,7 @@ def inference_testing_data(args):
     create_folder(os.path.dirname(submission_path))
     
     # Load model
-    model = BaselineCnn(classes_num)
+    model = Model(classes_num)
     checkpoint = torch.load(model_path)
     model.load_state_dict(checkpoint['state_dict'])
 
@@ -470,7 +466,7 @@ def inference_testing_data(args):
         audio_names, predictions, frame_wise_probs, seconds_per_frame, 
         sed_thres, sed_low_thres)
 
-    write_submission(estimated_event_list, submission_path)
+    write_testing_data_submission_csv(estimated_event_list, submission_path)
 
 
 if __name__ == '__main__':
@@ -484,12 +480,12 @@ if __name__ == '__main__':
     parser_train.add_argument('--validate', action='store_true', default=False)
     parser_train.add_argument('--cuda', action='store_true', default=False)
     
-    parser_inference_validation = subparsers.add_parser('inference_validation')
-    parser_inference_validation.add_argument('--dataset_dir', type=str, required=True)
-    parser_inference_validation.add_argument('--workspace', type=str, required=True)
-    parser_inference_validation.add_argument('--iteration', type=int, required=True)
-    parser_inference_validation.add_argument('--cuda', action='store_true', default=False)
-    parser_inference_validation.add_argument('--visualize', action='store_true', default=False)
+    parser_inference_validation_data = subparsers.add_parser('inference_validation_data')
+    parser_inference_validation_data.add_argument('--dataset_dir', type=str, required=True)
+    parser_inference_validation_data.add_argument('--workspace', type=str, required=True)
+    parser_inference_validation_data.add_argument('--iteration', type=int, required=True)
+    parser_inference_validation_data.add_argument('--cuda', action='store_true', default=False)
+    parser_inference_validation_data.add_argument('--visualize', action='store_true', default=False)
     
     parser_inference_testing_data = subparsers.add_parser('inference_testing_data')
     parser_inference_testing_data.add_argument('--workspace', type=str, required=True)
@@ -508,8 +504,8 @@ if __name__ == '__main__':
     if args.mode == 'train':
         train(args)
 
-    elif args.mode == 'inference_validation':
-        inference_validation(args)
+    elif args.mode == 'inference_validation_data':
+        inference_validation_data(args)
         
     elif args.mode == 'inference_testing_data':
         inference_testing_data(args)
